@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Minecraft Sales Tracker</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+        :root{--accent:#2b8aef;--muted:#666;--bg:#fafafa}
+        *{box-sizing:border-box;font-family:Inter,Segoe UI,system-ui,Arial,sans-serif}
+        body{margin:0;background:var(--bg);color:#111;padding:18px}
+        header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+        h1{font-size:20px;margin:0}
+        .btn{background:var(--accent);color:#fff;padding:8px 12px;border-radius:6px;border:0;cursor:pointer}
+        .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+        .container{display:grid;grid-template-columns:360px 1fr;gap:18px;align-items:start}
+        form{background:#fff;padding:14px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+        label{display:block;font-size:13px;margin-top:10px;color:var(--muted)}
+        input[type="text"],input[type="number"]{width:100%;padding:8px;border-radius:6px;border:1px solid #ddd;margin-top:6px}
+        .services{display:flex;flex-direction:column;margin-top:6px}
+        .services label{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid #eee;margin-bottom:6px;cursor:pointer}
+        .services input{accent-color:var(--accent)}
+        .actions-row{display:flex;gap:8px;margin-top:12px}
+        table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+        th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #f1f1f1;font-size:14px}
+        th{background:#fafafa;font-weight:600;color:var(--muted)}
+        .small{font-size:13px;color:var(--muted)}
+        .row-actions button{margin-right:6px;padding:6px 8px;border-radius:6px;border:0;cursor:pointer}
+        .edit{background:#ffd966;border:0}
+        .del{background:#ff6b6b;color:#fff;border:0}
+        .down-yes{color:green;font-weight:600}
+        .down-no{color:#999}
+        .top-right{position:relative}
+        .deleted-panel{position:fixed;right:18px;top:64px;width:420px;max-height:70vh;overflow:auto;background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.12);padding:12px;border-radius:8px;display:none;z-index:60}
+        .deleted-item{border:1px solid #f0f0f0;padding:10px;border-radius:6px;margin-bottom:8px}
+        .muted{color:var(--muted)}
+        @media (max-width:900px){
+            .container{grid-template-columns:1fr;gap:12px}
+            .deleted-panel{right:12px;left:12px;width:auto}
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Minecraft Sales Tracker</h1>
+        <div class="top-right">
+            <button id="toggleDeleted" class="btn">Show Deleted Orders</button>
+        </div>
+    </header>
+
+    <div class="container">
+        <form id="orderForm" autocomplete="off">
+            <input type="hidden" id="editingIndex" value="-1" />
+            <label>Order ID (leave blank to auto)</label>
+            <input id="orderId" type="text" placeholder="e.g. 1001" />
+
+            <label>Username</label>
+            <input id="username" type="text" placeholder="Minecraft username" required />
+
+            <label>Amount</label>
+            <input id="amount" type="number" min="0" step="0.01" placeholder="Amount" required />
+
+            <label>Service</label>
+            <div class="services" id="serviceGroup">
+                <label><input type="radio" name="service" value="base" checked /> Base</label>
+                <label><input type="radio" name="service" value="farm" /> Farm</label>
+                <label><input type="radio" name="service" value="hole" /> Hole</label>
+                <label><input type="radio" name="service" value="items" /> Items</label>
+            </div>
+
+            <label style="margin-top:8px">
+                <input id="downpayment" type="checkbox" /> Paid downpayment
+            </label>
+
+            <div class="actions-row">
+                <button id="submitBtn" class="btn" type="submit">Save Order</button>
+                <button id="clearBtn" type="button" class="btn ghost">Clear</button>
+            </div>
+        </form>
+
+        <div>
+            <div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+                <div class="small">Active Orders</div>
+                <div class="small muted">Data saved in your browser (localStorage)</div>
+            </div>
+
+            <table id="ordersTable">
+                <thead>
+                    <tr>
+                        <th style="width:80px">ID</th>
+                        <th>Username</th>
+                        <th>Amount</th>
+                        <th>Service</th>
+                        <th>Downpayment</th>
+                        <th style="width:180px">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="ordersBody">
+                    <!-- rows -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="deletedPanel" class="deleted-panel" aria-hidden="true">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong>Deleted Orders</strong>
+            <div><button id="clearDeleted" class="btn ghost">Clear All Deleted</button></div>
+        </div>
+        <div id="deletedList">
+            <!-- deleted orders -->
+        </div>
+    </div>
+
+    <script>
+        // Storage keys
+        const KEY_ACTIVE = 'mc_sales_active_v1';
+        const KEY_DELETED = 'mc_sales_deleted_v1';
+
+        // State
+        let orders = [];
+        let deleted = [];
+
+        // Elements
+        const form = document.getElementById('orderForm');
+        const orderIdInput = document.getElementById('orderId');
+        const usernameInput = document.getElementById('username');
+        const amountInput = document.getElementById('amount');
+        const downpaymentInput = document.getElementById('downpayment');
+        const serviceGroup = document.getElementById('serviceGroup');
+        const ordersBody = document.getElementById('ordersBody');
+        const deletedPanel = document.getElementById('deletedPanel');
+        const deletedList = document.getElementById('deletedList');
+        const toggleDeletedBtn = document.getElementById('toggleDeleted');
+        const submitBtn = document.getElementById('submitBtn');
+        const editingIndex = document.getElementById('editingIndex');
+        const clearBtn = document.getElementById('clearBtn');
+        const clearDeletedBtn = document.getElementById('clearDeleted');
+
+        // Utilities
+        function load() {
+            try { orders = JSON.parse(localStorage.getItem(KEY_ACTIVE)) || []; } catch(e){ orders = []; }
+            try { deleted = JSON.parse(localStorage.getItem(KEY_DELETED)) || []; } catch(e){ deleted = []; }
+            render();
+        }
+        function save() {
+            localStorage.setItem(KEY_ACTIVE, JSON.stringify(orders));
+            localStorage.setItem(KEY_DELETED, JSON.stringify(deleted));
+        }
+        function getSelectedService() {
+            const r = serviceGroup.querySelector('input[type="radio"]:checked');
+            return r ? r.value : 'base';
+        }
+        function resetForm() {
+            form.reset();
+            orderIdInput.value = '';
+            editingIndex.value = -1;
+            submitBtn.textContent = 'Save Order';
+        }
+
+        // Render active orders table
+        function render() {
+            ordersBody.innerHTML = '';
+            orders.sort((a,b)=> (Number(a.id)||0) - (Number(b.id)||0));
+            for (let i=0;i<orders.length;i++){
+                const o = orders[i];
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${o.id}</td>
+                    <td>${escapeHtml(o.username)}</td>
+                    <td>$${Number(o.amount).toFixed(2)}</td>
+                    <td>${escapeHtml(o.service)}</td>
+                    <td class="${o.down ? 'down-yes' : 'down-no'}">${o.down ? 'Yes' : 'No'}</td>
+                    <td class="row-actions">
+                        <button class="edit" data-index="${i}">Edit</button>
+                        <button class="del" data-index="${i}">Delete</button>
+                    </td>
+                `;
+                ordersBody.appendChild(tr);
+            }
+            renderDeleted();
+        }
+
+        // Render deleted panel
+        function renderDeleted(){
+            deletedList.innerHTML = '';
+            if(deleted.length === 0){
+                deletedList.innerHTML = '<div class="muted">No deleted orders</div>';
+                return;
+            }
+            deleted.slice().reverse().forEach((d, idx)=>{
+                const el = document.createElement('div');
+                el.className = 'deleted-item';
+                el.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                        <div><strong>ID ${d.id}</strong> — <span class="small muted">${escapeHtml(d.username)}</span></div>
+                        <div class="small muted">${new Date(d.deletedAt).toLocaleString()}</div>
+                    </div>
+                    <div style="margin-top:8px;font-size:14px">
+                        <div>Amount: $${Number(d.amount).toFixed(2)}</div>
+                        <div>Service: ${escapeHtml(d.service)}</div>
+                        <div>Downpayment: ${d.down ? 'Yes' : 'No'}</div>
+                    </div>
+                    <div style="margin-top:8px;display:flex;gap:8px">
+                        <button data-restore="${d._uuid}" class="btn ghost">Restore</button>
+                        <button data-view="${d._uuid}" class="btn">View Raw</button>
+                    </div>
+                `;
+                deletedList.appendChild(el);
+            });
+        }
+
+        // Create unique internal id for deleted items so restore targets reliably
+        function makeUUID(){ return 'u'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8); }
+
+        // Event handlers
+        form.addEventListener('submit', (e)=>{
+            e.preventDefault();
+            const idVal = orderIdInput.value.trim();
+            let idToUse = idVal;
+            // If blank, auto generate numeric id = max existing + 1
+            if(!idToUse){
+                const numericIds = orders.map(x=>Number(x.id)||0).concat(deleted.map(x=>Number(x.id)||0));
+                const max = numericIds.length ? Math.max(...numericIds) : 1000;
+                idToUse = String(max + 1);
+            }
+            const username = usernameInput.value.trim();
+            const amount = parseFloat(amountInput.value) || 0;
+            const service = getSelectedService();
+            const down = !!downpaymentInput.checked;
+            const idx = Number(editingIndex.value);
+
+            // If editing an existing entry
+            if(idx >= 0 && idx < orders.length){
+                orders[idx] = { id: idToUse, username, amount, service, down };
+            } else {
+                // check for duplicate id in active list; if exists, append suffix
+                if(orders.some(o=>String(o.id) === String(idToUse))){
+                    // keep id but add -1 suffix to keep uniqueness
+                    idToUse = idToUse + '-' + Math.random().toString(36).slice(2,5);
+                }
+                orders.push({ id: idToUse, username, amount, service, down });
+            }
+            save();
+            render();
+            resetForm();
+        });
+
+        // Clicks on Edit/Delete in table
+        ordersBody.addEventListener('click', (e)=>{
+            const btn = e.target.closest('button');
+            if(!btn) return;
+            const idx = Number(btn.dataset.index);
+            if(btn.classList.contains('edit')){
+                const o = orders[idx];
+                orderIdInput.value = o.id;
+                usernameInput.value = o.username;
+                amountInput.value = o.amount;
+                downpaymentInput.checked = !!o.down;
+                const radio = serviceGroup.querySelector(`input[value="${o.service}"]`);
+                if(radio) radio.checked = true;
+                editingIndex.value = idx;
+                submitBtn.textContent = 'Update Order';
+                window.scrollTo({top:0,behavior:'smooth'});
+            } else if(btn.classList.contains('del')){
+                if(!confirm('Delete this order? It will be moved to Deleted Orders so you can view later.')) return;
+                const removed = orders.splice(idx,1)[0];
+                removed.deletedAt = Date.now();
+                removed._uuid = makeUUID();
+                deleted.push(removed);
+                save();
+                render();
+            }
+        });
+
+        // Deleted panel buttons (restore/view)
+        deletedList.addEventListener('click', (e)=>{
+            const restoreUuid = e.target.getAttribute('data-restore');
+            const viewUuid = e.target.getAttribute('data-view');
+            if(restoreUuid){
+                const index = deleted.findIndex(d=>d._uuid === restoreUuid);
+                if(index === -1) return;
+                const item = deleted.splice(index,1)[0];
+                // restore into active list (keep same id)
+                orders.push({ id: item.id, username: item.username, amount: item.amount, service: item.service, down: item.down });
+                save(); render();
+            } else if(viewUuid){
+                const item = deleted.find(d=>d._uuid === viewUuid);
+                if(!item) return;
+                alert(
+`Deleted Order
+ID: ${item.id}
+Username: ${item.username}
+Amount: $${Number(item.amount).toFixed(2)}
+Service: ${item.service}
+Downpayment: ${item.down ? 'Yes' : 'No'}
+Deleted At: ${new Date(item.deletedAt).toLocaleString()}`
+                );
+            }
+        });
+
+        // Toggle deleted panel
+        toggleDeletedBtn.addEventListener('click', ()=>{
+            const showing = deletedPanel.style.display === 'block';
+            deletedPanel.style.display = showing ? 'none' : 'block';
+            toggleDeletedBtn.textContent = showing ? 'Show Deleted Orders' : 'Hide Deleted Orders';
+        });
+
+        // Clear form
+        clearBtn.addEventListener('click', ()=>{
+            if(confirm('Clear form?')) resetForm();
+        });
+
+        // Clear all deleted
+        clearDeletedBtn.addEventListener('click', ()=>{
+            if(!deleted.length) return;
+            if(confirm('Permanently remove all deleted orders? This cannot be undone.')) {
+                deleted = [];
+                save();
+                render();
+            }
+        });
+
+        // Small helper
+        function escapeHtml(str){
+            if(str == null) return '';
+            return String(str).replace(/[&<>"']/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]));
+        }
+
+        // Init
+        load();
+    </script>
+</body>
+</html>
